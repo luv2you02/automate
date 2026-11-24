@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>후판 자동배차</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='12' width='20' height='12' rx='2' fill='%232563eb'/%3E%3Cpath d='M22 15h5l3 4v5h-8z' fill='%231e40af'/%3E%3Ccircle cx='9' cy='26' r='3' fill='%231d2330'/%3E%3Ccircle cx='25' cy='26' r='3' fill='%231d2330'/%3E%3C/svg%3E">
+  <!-- Pretendard (고정 버전). 사내망에서 CDN이 막혀 있으면 맑은 고딕으로 자동 대체 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="12" width="20" height="12" rx="2" fill="currentColor"/><path d="M22 15h5l3 4v5h-8z" fill="currentColor" opacity=".7"/><circle cx="9" cy="26" r="3" fill="#0f172a"/><circle cx="25" cy="26" r="3" fill="#0f172a"/></svg>
+      <div>
+        <h1>후판 경매 자동배차</h1>
+        <p>당진 후판 · 경매 낙찰분 배차편성</p>
+      </div>
+    </div>
+    <div class="appbar-right">
+      <span id="job" class="job" hidden></span>
+      <span id="health" class="pill">서버 확인 중…</span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="메뉴">
+    <button role="tab" id="tabbtn-upload" aria-controls="tab-upload" data-tab="upload">업로드</button>
+    <button role="tab" id="tabbtn-dispatch" aria-controls="tab-dispatch" data-tab="dispatch">배차결과 <span class="count" id="cnt-trucks"></span></button>
+    <button role="tab" id="tabbtn-unassigned" aria-controls="tab-unassigned" data-tab="unassigned">미배차 <span class="count warn" id="cnt-unassigned"></span></button>
+    <button role="tab" id="tabbtn-chat" aria-controls="tab-chat" data-tab="chat">챗봇</button>
+    <button role="tab" id="tabbtn-dashboard" aria-controls="tab-dashboard" data-tab="dashboard">대시보드</button>
+  </nav>
+
+  <main>
+    <!-- ============================== 업로드 ============================== -->
+    <section id="tab-upload" class="panel" role="tabpanel" aria-labelledby="tabbtn-upload" hidden>
+      <div class="cols-upload">
+        <div class="card">
+          <div class="card-head">
+            <h2>낙찰현황 엑셀</h2>
+            <span class="muted">제품 시트 + 경매 시트가 든 파일. 매일 누적 파일을 그대로 올려도 중복은 걸러집니다.</span>
+          </div>
+          <label id="dropzone" class="dropzone" tabindex="0">
+            <input type="file" id="upload-files" accept=".xlsx,.xls" multiple hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <strong>엑셀 파일을 여기에 끌어다 놓거나 클릭해서 선택</strong>
+            <span>.xlsx · .xls · 여러 파일 가능</span>
+          </label>
+          <div id="preview"></div>
+          <div class="actions">
+            <button id="btn-clear-files" class="ghost" hidden>선택 취소</button>
+            <button id="btn-upload" class="primary" disabled>반영</button>
+          </div>
+          <div id="upload-result"></div>
+        </div>
+
+        <div class="stack">
+          <div class="card">
+            <div class="card-head">
+              <h2>인도처 주소표</h2>
+              <span class="muted"><code>인도처코드</code>·<code>주소</code> 컬럼 엑셀. 주소가 있으면 <b>시 단위</b>, 없으면 <b>운송경로</b>로 지역을 판단합니다.</span>
+            </div>
+            <div class="inline-form">
+              <input type="file" id="places-file" accept=".xlsx,.xls">
+              <button id="btn-places">주소표 반영</button>
+            </div>
+            <div id="places-result"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h2>주소 없는 인도처 <span class="count" id="cnt-noaddr"></span></h2>
+              <span class="muted">주소를 입력하면 해당 인도처 제품의 지역이 시 단위로 바뀝니다 (편성된 차량은 그대로).</span>
+            </div>
+            <div id="places-list" class="scroll-y"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>업로드 이력</h2></div>
+        <div id="upload-history"></div>
+      </div>
+    </section>
+
+    <!-- ============================== 배차결과 ============================== -->
+    <section id="tab-dispatch" class="panel" role="tabpanel" aria-labelledby="tabbtn-dispatch" hidden>
+      <div class="toolbar">
+        <div class="filters">
+          <label>배차일<select id="f-date"><option value="">전체</option></select></label>
+          <label>분류<select id="f-cat"><option value="">전체</option><option value="WIDE">광폭재</option><option value="NORMAL">일반재</option></select></label>
+          <label>지역<select id="f-region"><option value="">전체</option></select></label>
+          <label>고객사<input id="f-cust" type="search" placeholder="이름 일부"></label>
+          <button id="btn-reset-filters" class="ghost small">초기화</button>
+        </div>
+        <div class="toolbar-right">
+          <a id="btn-export" class="button" href="/api/export">엑셀로 내보내기</a>
+          <button id="btn-dispatch" class="primary">배차 실행</button>
+        </div>
+      </div>
+      <div id="dispatch-summary"></div>
+
+      <div class="dispatch-layout">
+        <div>
+          <div class="list-head"><span id="truck-count" class="muted"></span>
+            <span class="muted small">제품을 끌어서 다른 차량이나 오른쪽 미배차 목록으로 옮길 수 있습니다.</span></div>
+          <div id="truck-grid" class="truck-grid"></div>
+        </div>
+        <aside class="side">
+          <div id="unassigned-drop" class="side-card drop-target">
+            <div class="drop-hint"></div>
+            <div class="side-head">
+              <h3>미배차</h3><span id="side-total" class="muted"></span>
+            </div>
+            <p class="muted small">끌어서 차량에 넣거나, 차량의 제품을 여기에 놓아 미배차로 되돌립니다.</p>
+            <div id="side-list" class="side-list"></div>
+          </div>
+          <details class="side-card">
+            <summary>번호로 이동 (키보드)</summary>
+            <div class="move-form">
+              <input id="move-product" placeholder="제품번호">
+              <input id="move-truck" placeholder="차량번호 (비우면 미배차로)" list="truck-ids">
+              <datalist id="truck-ids"></datalist>
+              <button id="btn-move">이동</button>
+            </div>
+          </details>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============================== 미배차 ============================== -->
+    <section id="tab-unassigned" class="panel" role="tabpanel" aria-labelledby="tabbtn-unassigned" hidden>
+      <div class="toolbar">
+        <div id="un-stats" class="chips"></div>
+        <div class="filters">
+          <label>정렬<select id="un-sort"><option value="carry">이월 일수 많은 순</option><option value="weight">중량 큰 순</option></select></label>
+        </div>
+      </div>
+      <div id="un-content"></div>
+    </section>
+
+    <!-- ============================== 챗봇 ============================== -->
+    <section id="tab-chat" class="panel" role="tabpanel" aria-labelledby="tabbtn-chat" hidden>
+      <div class="chat">
+        <div class="chat-head">
+          <div>
+            <h2>배차 상태 조회</h2>
+            <span class="muted">제품번호 · 주문번호 · 경매번호 · 고객사명 · 인도처명 · 지역으로 물어보세요. 답변 아래 MMS 문구를 바로 복사할 수 있습니다.</span>
+          </div>
+          <button id="btn-clear-chat" class="ghost small">대화 지우기</button>
+        </div>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <div class="composer">
+          <div id="chat-examples" class="chips"></div>
+          <div class="composer-box">
+            <textarea id="chat-input" rows="1" placeholder="예: D261121029 배차됐어?  (Enter 전송 · Shift+Enter 줄바꿈)"></textarea>
+            <button id="btn-chat" class="primary">조회</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== 대시보드 ============================== -->
+    <section id="tab-dashboard" class="panel" role="tabpanel" aria-labelledby="tabbtn-dashboard" hidden>
+      <div id="dashboard"></div>
+    </section>
+  </main>
+
+  <!-- 데이터 초기화 확인 창 -->
+  <dialog id="reset-dialog" class="modal" aria-labelledby="reset-title">
+    <form id="reset-form" method="dialog">
+      <h2 id="reset-title">데이터 초기화</h2>
+      <p>업로드한 제품·주문, 배차 결과(차량), 업로드 이력, 상태 이력을 <b>모두 지우고</b> 처음 상태로 돌립니다.</p>
+      <ul class="modal-list">
+        <li>지우기 직전에 <b>자동 백업</b>을 만듭니다. 잘못 초기화했으면 그 백업으로 되돌릴 수 있습니다.</li>
+        <li>지금 화면의 제품 <b id="reset-count">-</b>건, 차량 <b id="reset-trucks">-</b>대가 사라집니다.</li>
+      </ul>
+      <label class="check"><input type="checkbox" id="reset-keep-places" checked><span>직접 입력한 <b>인도처 주소표는 남기기</b></span></label>
+      <label class="confirm-label" for="reset-confirm">계속하려면 아래에 <b>초기화</b> 를 입력하세요.</label>
+      <input id="reset-confirm" autocomplete="off" placeholder="초기화">
+      <div class="modal-actions">
+        <button type="button" id="reset-cancel">취소</button>
+        <button type="submit" id="reset-submit" class="danger-solid" disabled>데이터 초기화</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+  <script src="app.js"></script>
+</body>
+</html>
